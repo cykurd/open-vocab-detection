@@ -232,7 +232,7 @@ class BDD100KDataset(Dataset):
                 except:
                     pass
         
-        if self.transform:
+        if self.transform is not None:
             image = self.transform(image)
             if segmentation is not None:
                 segmentation = self.transform(segmentation)

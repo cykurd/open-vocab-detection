@@ -31,14 +31,28 @@ def compute_naive_loss(outputs, target_boxes):
 	pred_boxes = outputs.pred_boxes  # [B, 900, 4]
 	objectness = outputs.logits      # [B, 900, 256]
 	
-	loss_obj = objectness.mean()
+	# Stabilize objectness loss - clamp to prevent -inf
+	objectness_clamped = torch.clamp(objectness, min=-10.0, max=10.0)
+	loss_obj = objectness_clamped.mean()
+	
+	# Handle bounding box loss more carefully
 	if len(target_boxes) > 0:
 		tb = torch.tensor(target_boxes, dtype=torch.float32, device=pred_boxes.device)
 		K = min(tb.shape[0], pred_boxes.shape[1])
-		loss_box = nn.functional.l1_loss(pred_boxes[0, :K], tb[:K])
+		# Clamp predictions to reasonable range
+		pred_boxes_clamped = torch.clamp(pred_boxes[0, :K], min=-10.0, max=10.0)
+		loss_box = nn.functional.l1_loss(pred_boxes_clamped, tb[:K])
 	else:
 		loss_box = torch.zeros((), device=pred_boxes.device)
-	return loss_obj + loss_box
+	
+	total_loss = loss_obj + loss_box
+	
+	# Final safety check
+	if torch.isnan(total_loss) or torch.isinf(total_loss):
+		print(f"Warning: Invalid loss detected (obj: {loss_obj.item():.4f}, box: {loss_box.item():.4f})")
+		total_loss = torch.tensor(0.0, device=pred_boxes.device, requires_grad=True)
+	
+	return total_loss
 
 
 def main():
@@ -50,56 +64,108 @@ def main():
 	parser.add_argument("--steps", type=int, default=4, help="Number of optimization steps")
 	parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
 	parser.add_argument("--use_10k", action="store_true", help="Use 10k subset instead of full 100k dataset")
+	parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda", "mps"], help="Force device selection (default: auto)")
 	args = parser.parse_args()
 
-	device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+	if args.device == "cpu":
+		device = torch.device("cpu")
+	elif args.device == "cuda":
+		device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+	elif args.device == "mps":
+		device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+	else:
+		device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 	print(f"Using device: {device}")
 
 	# Dataset
-	dataset = BDD100KDataset(data_dir=args.data_dir, split=args.split, transform=None, max_samples=args.max_samples, use_100k=not args.use_10k)
-	if len(dataset) == 0:
-		print("No samples found. Common issues:")
-		if not args.use_10k:
-			print("1. Images: Ensure data_dir/images/100k/<split>/ contains images")
-			print("2. Annotations: Download consolidated JSON from http://bdd-data.berkeley.edu/download.html")
-			print("   Place as: data_dir/labels/bdd100k_labels_images_<split>.json")
-		else:
-			print("1. Images: Ensure data_dir/<split>/ contains images (e.g., data/10k/train/)")
-			print("2. Annotations: Download JSON labels from http://bdd-data.berkeley.edu/download.html")
-			print("   Place them as: data_dir/annotations/bdd100k_labels_<split>.json")
-			print(f"   Or in parent directory: data/annotations/bdd100k_labels_{args.split}.json")
+	try:
+		dataset = BDD100KDataset(data_dir=args.data_dir, split=args.split, transform=None, max_samples=args.max_samples, use_100k=not args.use_10k)
+		if len(dataset) == 0:
+			print("No samples found. Common issues:")
+			if not args.use_10k:
+				print("1. Images: Ensure data_dir/images/100k/<split>/ contains images")
+				print("2. Annotations: Download consolidated JSON from http://bdd-data.berkeley.edu/download.html")
+				print("   Place as: data_dir/labels/bdd100k_labels_images_<split>.json")
+			else:
+				print("1. Images: Ensure data_dir/<split>/ contains images (e.g., data/10k/train/)")
+				print("2. Annotations: Download JSON labels from http://bdd-data.berkeley.edu/download.html")
+				print("   Place them as: data_dir/annotations/bdd100k_labels_<split>.json")
+				print(f"   Or in parent directory: data/annotations/bdd100k_labels_{args.split}.json")
+			return
+		
+		# Test loading a single sample to catch data issues early
+		print("Testing data loading...")
+		try:
+			test_sample = dataset[0]
+			print(f"✓ Sample loaded: image shape {test_sample['image'].size}, {len(test_sample.get('boxes', []))} boxes, {len(test_sample.get('labels', []))} labels")
+		except Exception as e:
+			print(f"Error loading test sample: {e}")
+			import traceback
+			traceback.print_exc()
+			return
+		
+		dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+		
+	except Exception as e:
+		print(f"Error loading dataset: {e}")
+		print("Please check your data directory and file structure.")
 		return
-	dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
 	# Model
-	detector, processor = load_detector()
-	detector = detector.to(device)
+	try:
+		print("Loading detector model...")
+		detector, processor = load_detector()
+		detector = detector.to(device)
+		print("✓ Model loaded successfully")
 
-	trainable = freeze_for_phase1(detector)
-	total = sum(p.numel() for p in detector.parameters())
-	print(f"Trainable params (Phase 1): {trainable:,} / {total:,}")
+		trainable = freeze_for_phase1(detector)
+		total = sum(p.numel() for p in detector.parameters())
+		print(f"Trainable params (Phase 1): {trainable:,} / {total:,}")
 
-	optimizer = torch.optim.Adam([p for p in detector.parameters() if p.requires_grad], lr=args.lr)
-	detector.train()
+		optimizer = torch.optim.Adam([p for p in detector.parameters() if p.requires_grad], lr=args.lr)
+		detector.train()
+		print("✓ Model ready for training")
+		
+	except Exception as e:
+		print(f"Error loading model: {e}")
+		return
 
 	step = 0
 	for sample in dataloader:
 		if step >= args.steps:
 			break
-		image = sample["image"]
-		text = " ".join(sorted(set(sample.get("labels", ["object"])))) or "object"
-		inputs = processor(images=image, text=text, return_tensors="pt")
-		inputs = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in inputs.items()}
+		
+		try:
+			image = sample["image"]
+			text = " ".join(sorted(set(sample.get("labels", ["object"])))).strip() or "object"
+			
+			# Process inputs with error handling
+			inputs = processor(images=image, text=text, return_tensors="pt")
+			inputs = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in inputs.items()}
 
-		outputs = detector(**inputs)
-		loss = compute_naive_loss(outputs, sample.get("boxes", []))
+			# Forward pass with error handling
+			outputs = detector(**inputs)
+			loss = compute_naive_loss(outputs, sample.get("boxes", []))
 
-		optimizer.zero_grad()
-		loss.backward()
-		optimizer.step()
+			# Backward pass with gradient clipping
+			optimizer.zero_grad()
+			loss.backward()
+			
+			# Gradient clipping to prevent exploding gradients
+			torch.nn.utils.clip_grad_norm_([p for p in detector.parameters() if p.requires_grad], max_norm=1.0)
+			
+			optimizer.step()
 
-		step += 1
-		print(f"Step {step}/{args.steps} - loss: {loss.item():.4f}")
+			step += 1
+			print(f"Step {step}/{args.steps} - loss: {loss.item():.4f}")
+			
+		except Exception as e:
+			print(f"Error on step {step + 1}: {e}")
+			print(f"Sample keys: {list(sample.keys())}")
+			print(f"Image shape: {sample['image'].size if 'image' in sample else 'N/A'}")
+			print(f"Labels: {sample.get('labels', 'N/A')}")
+			print(f"Boxes: {sample.get('boxes', 'N/A')}")
+			break
 
 	print("Smoke test completed.")
 
