@@ -70,6 +70,17 @@ class DetectionHead(nn.Module):
         self.bbox_head = nn.Linear(d_model, 4)  # [x1, y1, x2, y2]
         self.confidence_head = nn.Linear(d_model, 1)  # objectness score
         
+        # Initialize bbox head to predict boxes near center with small size
+        # Bias for [x1, y1, x2, y2] ~ [0.3, 0.3, 0.7, 0.7] (small box at center)
+        # sigmoid(x) ≈ 0.5 when x=0, so we want logit ≈ 0.5 -> logit ≈ -0.4 -> bias ≈ -0.4
+        with torch.no_grad():
+            self.bbox_head.bias.data = torch.tensor([-0.7, -0.7, -0.2, -0.2])  # Centers around [0.3, 0.3, 0.6, 0.6]
+            self.bbox_head.weight.data *= 0.1  # Small weights to start
+        
+        # Initialize confidence head to low confidence initially
+        with torch.no_grad():
+            self.confidence_head.bias.data.fill_(-2.0)  # sigmoid(-2) ≈ 0.12 (low confidence)
+        
         # Initialize object queries
         nn.init.normal_(self.query_embed.weight)
         
@@ -97,6 +108,18 @@ class DetectionHead(nn.Module):
         # Generate predictions
         pred_boxes = self.bbox_head(attended_queries)
         pred_logits = self.confidence_head(attended_queries)
+        
+        # Apply sigmoid to get [0,1] normalized coordinates
+        pred_boxes = torch.sigmoid(pred_boxes)
+        
+        # Ensure x1 < x2 and y1 < y2 by sorting coordinates
+        # This prevents negative box areas and invalid IoU calculations
+        pred_boxes = torch.stack([
+            torch.min(pred_boxes[:, :, 0], pred_boxes[:, :, 2]),
+            torch.min(pred_boxes[:, :, 1], pred_boxes[:, :, 3]),
+            torch.max(pred_boxes[:, :, 0], pred_boxes[:, :, 2]),
+            torch.max(pred_boxes[:, :, 1], pred_boxes[:, :, 3]),
+        ], dim=-1)
         
         return pred_boxes, pred_logits
 
@@ -202,11 +225,14 @@ class CLIPTransformerDetector(nn.Module):
         
         # Create output object similar to GroundingDINO
         class Outputs:
-            def __init__(self, pred_boxes, logits):
+            def __init__(self, pred_boxes, logits, region_embeddings=None):
                 self.pred_boxes = pred_boxes
                 self.logits = logits
+                self.region_embeddings = region_embeddings  # For contrastive loss
                 
-        return Outputs(pred_boxes, pred_logits)
+        # Return region embeddings (the cross-attended features before detection head)
+        # Shape: [batch_size, num_queries, d_model]
+        return Outputs(pred_boxes, pred_logits, region_embeddings=cross_attended)
 
 
 def load_clip_transformer_detector(model_name="openai/clip-vit-base-patch16", 
