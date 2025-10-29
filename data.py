@@ -202,9 +202,21 @@ class BDD100KDataset(Dataset):
         image = Image.open(image_path).convert("RGB")
         
         # Extract bounding boxes and labels
+        # Handle both consolidated JSON format (with frames) and per-image format
         boxes = []
         labels = []
-        for obj in ann.get("labels", []):
+        objects_list = []
+        
+        # Check if this is consolidated JSON format (has frames)
+        if "frames" in ann and len(ann["frames"]) > 0:
+            for frame in ann["frames"]:
+                if "objects" in frame:
+                    objects_list.extend(frame["objects"])
+        elif "labels" in ann:
+            objects_list = ann["labels"]
+        
+        # Extract boxes and categories from objects
+        for obj in objects_list:
             if "box2d" in obj:
                 box = obj["box2d"]
                 boxes.append([box["x1"], box["y1"], box["x2"], box["y2"]])
