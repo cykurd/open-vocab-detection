@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from load_detector import load_detector
 from data import BDD100KDataset
+from losses import compute_detection_loss
 
 
 def freeze_for_phase1(model: torch.nn.Module) -> int:
@@ -24,35 +25,6 @@ def freeze_for_phase1(model: torch.nn.Module) -> int:
 def collate_fn(batch):
 	# Keep it simple: batch size 1 expected in this smoke test
 	return batch[0]
-
-
-def compute_naive_loss(outputs, target_boxes):
-	# NOTE: This is a tiny smoke-test loss, not the final training objective
-	pred_boxes = outputs.pred_boxes  # [B, 900, 4]
-	objectness = outputs.logits      # [B, 900, 256]
-	
-	# Stabilize objectness loss - clamp to prevent -inf
-	objectness_clamped = torch.clamp(objectness, min=-10.0, max=10.0)
-	loss_obj = objectness_clamped.mean()
-	
-	# Handle bounding box loss more carefully
-	if len(target_boxes) > 0:
-		tb = torch.tensor(target_boxes, dtype=torch.float32, device=pred_boxes.device)
-		K = min(tb.shape[0], pred_boxes.shape[1])
-		# Clamp predictions to reasonable range
-		pred_boxes_clamped = torch.clamp(pred_boxes[0, :K], min=-10.0, max=10.0)
-		loss_box = nn.functional.l1_loss(pred_boxes_clamped, tb[:K])
-	else:
-		loss_box = torch.zeros((), device=pred_boxes.device)
-	
-	total_loss = loss_obj + loss_box
-	
-	# Final safety check
-	if torch.isnan(total_loss) or torch.isinf(total_loss):
-		print(f"Warning: Invalid loss detected (obj: {loss_obj.item():.4f}, box: {loss_box.item():.4f})")
-		total_loss = torch.tensor(0.0, device=pred_boxes.device, requires_grad=True)
-	
-	return total_loss
 
 
 def main():
@@ -130,8 +102,9 @@ def main():
 		print(f"Error loading model: {e}")
 		return
 
-	# Create checkpoint directory
-	checkpoint_dir = "checkpoints"
+	# Create output directory
+	output_dir = "outputs"
+	checkpoint_dir = os.path.join(output_dir, "checkpoints")
 	os.makedirs(checkpoint_dir, exist_ok=True)
 	
 	step = 0
@@ -143,6 +116,7 @@ def main():
 		
 		try:
 			image = sample["image"]
+            # can update 'object' here to be more specific to the road hazards or any other prompt we want to use
 			text = " ".join(sorted(set(sample.get("labels", ["object"])))).strip() or "object"
 			
 			# Process inputs with error handling
@@ -151,7 +125,7 @@ def main():
 
 			# Forward pass with error handling
 			outputs = detector(**inputs)
-			loss = compute_naive_loss(outputs, sample.get("boxes", []))
+			loss = compute_detection_loss(outputs, sample.get("boxes", []), sample.get("labels", []))
 
 			# Backward pass with gradient clipping
 			optimizer.zero_grad()
