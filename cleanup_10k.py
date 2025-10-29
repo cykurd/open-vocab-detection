@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Clean up BDD100K dataset to create a clean 10k subset with matching labels and segmentation.
+Clean up BDD100K dataset to create a clean 10k subset with matching labels.
 
 This script:
-1. Finds the first 10k images from the 100k dataset
-2. Ensures all have matching labels and segmentation
-3. Creates clean train/val/test splits (7k/1.5k/1.5k)
-4. Optionally removes unmatched images to save space
+1. Finds 10k images from the 100k dataset (7k train, 1.5k val, 1.5k test)
+2. Ensures all have matching labels
+3. Creates clean dataset structure in output directory
+4. Optionally removes unmatched files from original dataset
 """
 
 import os

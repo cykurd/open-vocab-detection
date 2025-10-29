@@ -19,24 +19,29 @@ pip install -r requirements.txt
 
 2. **Extract to `data/` folder**:
    - Unzip all downloaded files
-   - Rename folders if needed to match structure below
-   - Final structure should be:
+   - Structure will be:
      ```
      data/
-       ├── images/100k/
+       ├── 100k/100k/
        │   ├── train/  (70k images)
        │   ├── val/    (10k images)
        │   └── test/   (20k images)
-       ├── labels/
-       │   ├── bdd100k_labels_images_train.json
-       │   └── bdd100k_labels_images_val.json
-       └── labels/seg/  (segmentation masks)
+       ├── labels/100k/
+       │   ├── train/  (*.json files)
+       │   ├── val/    (*.json files)
+       │   └── test/   (*.json files)
+       └── segmentation/  (optional)
      ```
 
-3. **Clean up dataset** (optional):
+3. **Clean up dataset** (optional, creates 10k subset):
    ```bash
-   python cleanup_10k.py  # Creates clean 10k subset with matching labels
+   python cleanup_10k.py --data_dir data --output_dir data/10k_clean --max_images 10000 --remove_unmatched
    ```
+   This creates `data/10k_clean/` with:
+   - 7,000 train images + labels
+   - 1,500 val images + labels  
+   - 1,500 test images + labels
+   And removes unmatched files from original dataset to save space.
 
 ## Phase 1: Cross-Attention Mechanism Training
 

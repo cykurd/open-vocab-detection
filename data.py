@@ -19,40 +19,43 @@ class BDD100KDataset(Dataset):
         
         # Determine image directory based on dataset type
         if use_100k:
-            # For 100k dataset, look for images/100k/{split}/ structure
-            if os.path.exists(os.path.join(data_dir, "images", "100k", split)):
-                self.images_dir = os.path.join(data_dir, "images", "100k", split)
-            elif os.path.exists(os.path.join(data_dir, "100k", split)):
-                self.images_dir = os.path.join(data_dir, "100k", split)
-            else:
+            # For 100k dataset, look for actual extracted structure: data/100k/100k/{split}/
+            images_dir_candidates = [
+                os.path.join(data_dir, "100k", "100k", split),  # Actual extracted structure
+                os.path.join(data_dir, "images", "100k", split),
+                os.path.join(data_dir, "100k", split),
+                os.path.join(data_dir, split),
+            ]
+            self.images_dir = next((d for d in images_dir_candidates if os.path.exists(d)), None)
+            if not self.images_dir:
                 self.images_dir = os.path.join(data_dir, split)
                 print(f"Warning: Assuming 100k images in {self.images_dir}")
         else:
-            # For 10k subset, try multiple possible structures
-            # Structure 1: data/10k/{split}/ (images directly in split folder)
-            if os.path.exists(os.path.join(data_dir, split)):
-                self.images_dir = os.path.join(data_dir, split)
-            # Structure 2: data/10k/images/{split}/ (standard structure)
-            elif os.path.exists(os.path.join(data_dir, "images", split)):
-                self.images_dir = os.path.join(data_dir, "images", split)
-            else:
+            # For cleaned 10k dataset, look for: data/10k_clean/images/{split}/
+            # Or fallback to: data/10k/{split}/ or data/{split}/
+            images_dir_candidates = [
+                os.path.join(data_dir, "images", split),  # Cleaned dataset structure
+                os.path.join(data_dir, split),  # Direct structure
+            ]
+            self.images_dir = next((d for d in images_dir_candidates if os.path.exists(d)), None)
+            if not self.images_dir:
                 self.images_dir = os.path.join(data_dir, split)
                 print(f"Warning: Assuming images in {self.images_dir}")
         
-        # Try multiple annotation locations (consolidated JSON first)
+        # Try multiple annotation locations (consolidated JSON first, then per-image JSONs)
         if use_100k:
+            # For 100k dataset, prefer consolidated JSON, fallback to per-image JSONs
             annotation_paths = [
                 os.path.join(data_dir, "labels", f"bdd100k_labels_images_{split}.json"),
                 os.path.join(data_dir, "annotations", f"bdd100k_labels_images_{split}.json"),
                 os.path.join(data_dir, f"bdd100k_labels_images_{split}.json"),
-                os.path.join(os.path.dirname(data_dir), "labels", f"bdd100k_labels_images_{split}.json"),
             ]
         else:
+            # For cleaned 10k dataset, look for consolidated JSON in labels directory
             annotation_paths = [
+                os.path.join(data_dir, "labels", f"bdd100k_labels_{split}.json"),
                 os.path.join(data_dir, "annotations", f"bdd100k_labels_{split}.json"),
-                os.path.join(data_dir, f"labels_{split}.json"),
                 os.path.join(data_dir, f"bdd100k_labels_{split}.json"),
-                os.path.join(os.path.dirname(data_dir), "annotations", f"bdd100k_labels_{split}.json"),
             ]
         
         self.annotations_file = None
@@ -69,14 +72,17 @@ class BDD100KDataset(Dataset):
         else:
             # Fallback: per-image JSON directories
             if use_100k:
+                # Original 100k dataset structure
                 per_image_dir_candidates = [
                     os.path.join(data_dir, "labels", "100k", split),
                     os.path.join(os.path.dirname(data_dir), "labels", "100k", split),
                 ]
             else:
+                # Cleaned 10k dataset may have per-image JSONs in labels/{split}/ or labels/100k/{split}/
                 per_image_dir_candidates = [
+                    os.path.join(data_dir, "labels", split),  # Cleaned dataset structure
+                    os.path.join(data_dir, "labels", "100k", split),  # Original structure
                     os.path.join(os.path.dirname(data_dir), "labels", "100k", split),
-                    os.path.join(data_dir, "labels", "100k", split),
                 ]
             per_image_dir = next((p for p in per_image_dir_candidates if os.path.isdir(p)), None)
             if per_image_dir:
@@ -161,9 +167,8 @@ class BDD100KDataset(Dataset):
         if max_samples:
             self.annotations = self.annotations[:max_samples]
         
-        # For 10k subset, create proper splits from 100k data
-        if not use_100k and len(self.annotations) > 0:
-            self._create_10k_splits()
+        # Note: _create_10k_splits() is only needed when combining raw data into 10k subset.
+        # If using cleaned dataset (data/10k_clean), splits are already correct and shouldn't be re-split.
     
     def _create_10k_splits(self):
         """Create proper 10k splits: 7k train, 1.5k val, 1.5k test"""
@@ -189,7 +194,11 @@ class BDD100KDataset(Dataset):
     
     def __getitem__(self, idx):
         ann = self.annotations[idx]
-        image_path = os.path.join(self.images_dir, ann["name"])
+        # Ensure image filename has .jpg extension
+        image_name = ann["name"]
+        if not image_name.endswith('.jpg'):
+            image_name = image_name + '.jpg'
+        image_path = os.path.join(self.images_dir, image_name)
         image = Image.open(image_path).convert("RGB")
         
         # Extract bounding boxes and labels
