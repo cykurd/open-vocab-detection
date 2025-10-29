@@ -43,7 +43,7 @@ def compute_naive_loss(outputs, target_boxes):
 
 def main():
 	parser = argparse.ArgumentParser(description="Minimal BDD100K training smoke test")
-	parser.add_argument("--data_dir", type=str, default="data", help="Path to BDD100K root (with images/ and annotations/)")
+	parser.add_argument("--data_dir", type=str, default="data/10k", help="Path to BDD100K root (e.g., data/10k with train/val folders)")
 	parser.add_argument("--split", type=str, default="train", choices=["train", "val"], help="Dataset split")
 	parser.add_argument("--max_samples", type=int, default=16, help="Limit number of samples for quick test")
 	parser.add_argument("--batch_size", type=int, default=1, help="Use 1 for simplest run")
@@ -57,8 +57,11 @@ def main():
 	# Dataset
 	dataset = BDD100KDataset(data_dir=args.data_dir, split=args.split, transform=None, max_samples=args.max_samples)
 	if len(dataset) == 0:
-		print("No samples found. Ensure BDD100K is placed under data_dir with correct structure.")
-		print("Expected: data_dir/images/<split> and data_dir/annotations/bdd100k_labels_<split>.json")
+		print("No samples found. Common issues:")
+		print("1. Images: Ensure data_dir/<split>/ contains images (e.g., data/10k/train/)")
+		print("2. Annotations: Download JSON labels from https://bdd-data.berkeley.edu/portal.html")
+		print("   Place them as: data_dir/annotations/bdd100k_labels_<split>.json")
+		print(f"   Or in parent directory: data/annotations/bdd100k_labels_{args.split}.json")
 		return
 	dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 

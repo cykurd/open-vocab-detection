@@ -12,16 +12,41 @@ class BDD100KDataset(Dataset):
         self.data_dir = data_dir
         self.split = split
         self.transform = transform
-        self.images_dir = os.path.join(data_dir, "images", split)
-        self.annotations_file = os.path.join(data_dir, "annotations", f"bdd100k_labels_{split}.json")
+        
+        # Try multiple possible structures
+        # Structure 1: data/10k/{split}/ (images directly in split folder)
+        if os.path.exists(os.path.join(data_dir, split)):
+            self.images_dir = os.path.join(data_dir, split)
+        # Structure 2: data/10k/images/{split}/ (standard structure)
+        elif os.path.exists(os.path.join(data_dir, "images", split)):
+            self.images_dir = os.path.join(data_dir, "images", split)
+        else:
+            self.images_dir = os.path.join(data_dir, split)
+            print(f"Warning: Assuming images in {self.images_dir}")
+        
+        # Try multiple annotation locations
+        annotation_paths = [
+            os.path.join(data_dir, "annotations", f"bdd100k_labels_{split}.json"),
+            os.path.join(data_dir, f"labels_{split}.json"),
+            os.path.join(data_dir, f"bdd100k_labels_{split}.json"),
+            os.path.join(os.path.dirname(data_dir), "annotations", f"bdd100k_labels_{split}.json"),
+        ]
+        
+        self.annotations_file = None
+        for path in annotation_paths:
+            if os.path.exists(path):
+                self.annotations_file = path
+                break
         
         # Load annotations
-        if os.path.exists(self.annotations_file):
+        if self.annotations_file and os.path.exists(self.annotations_file):
             with open(self.annotations_file, 'r') as f:
                 self.annotations = json.load(f)
+            print(f"Loaded {len(self.annotations)} annotations from {self.annotations_file}")
         else:
             self.annotations = []
-            print(f"Warning: Annotations file not found at {self.annotations_file}")
+            print(f"Warning: No annotations file found. Tried: {annotation_paths}")
+            print("You may need to download annotations separately from: https://bdd-data.berkeley.edu/portal.html")
         
         if max_samples:
             self.annotations = self.annotations[:max_samples]
