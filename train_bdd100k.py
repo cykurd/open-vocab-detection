@@ -43,25 +43,31 @@ def compute_naive_loss(outputs, target_boxes):
 
 def main():
 	parser = argparse.ArgumentParser(description="Minimal BDD100K training smoke test")
-	parser.add_argument("--data_dir", type=str, default="data/10k", help="Path to BDD100K root (e.g., data/10k with train/val folders)")
-	parser.add_argument("--split", type=str, default="train", choices=["train", "val"], help="Dataset split")
+	parser.add_argument("--data_dir", type=str, default="data", help="Path to BDD100K root (e.g., data with images/100k/ structure)")
+	parser.add_argument("--split", type=str, default="train", choices=["train", "val", "test"], help="Dataset split")
 	parser.add_argument("--max_samples", type=int, default=16, help="Limit number of samples for quick test")
 	parser.add_argument("--batch_size", type=int, default=1, help="Use 1 for simplest run")
 	parser.add_argument("--steps", type=int, default=4, help="Number of optimization steps")
 	parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
+	parser.add_argument("--use_10k", action="store_true", help="Use 10k subset instead of full 100k dataset")
 	args = parser.parse_args()
 
 	device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 	print(f"Using device: {device}")
 
 	# Dataset
-	dataset = BDD100KDataset(data_dir=args.data_dir, split=args.split, transform=None, max_samples=args.max_samples)
+	dataset = BDD100KDataset(data_dir=args.data_dir, split=args.split, transform=None, max_samples=args.max_samples, use_100k=not args.use_10k)
 	if len(dataset) == 0:
 		print("No samples found. Common issues:")
-		print("1. Images: Ensure data_dir/<split>/ contains images (e.g., data/10k/train/)")
-		print("2. Annotations: Download JSON labels from https://bdd-data.berkeley.edu/portal.html")
-		print("   Place them as: data_dir/annotations/bdd100k_labels_<split>.json")
-		print(f"   Or in parent directory: data/annotations/bdd100k_labels_{args.split}.json")
+		if not args.use_10k:
+			print("1. Images: Ensure data_dir/images/100k/<split>/ contains images")
+			print("2. Annotations: Download consolidated JSON from http://bdd-data.berkeley.edu/download.html")
+			print("   Place as: data_dir/labels/bdd100k_labels_images_<split>.json")
+		else:
+			print("1. Images: Ensure data_dir/<split>/ contains images (e.g., data/10k/train/)")
+			print("2. Annotations: Download JSON labels from http://bdd-data.berkeley.edu/download.html")
+			print("   Place them as: data_dir/annotations/bdd100k_labels_<split>.json")
+			print(f"   Or in parent directory: data/annotations/bdd100k_labels_{args.split}.json")
 		return
 	dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
