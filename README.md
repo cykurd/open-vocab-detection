@@ -27,6 +27,14 @@ pip install -r requirements.txt
      - `data/10k/annotations/` (recommended), OR
      - `data/annotations/` (parent directory)
 
+## Notes on Labels vs 10k Images
+
+- If you downloaded the "100k" per-image label files (directories like `data/labels/100k/train/*.json`), filenames often do not match the 10k image names. Our loader will try to match `<name>.json` to `<name>.jpg` in `data/10k/<split>/` and will silently result in 0 matches if names differ.
+- For the 10k image subset, prefer the consolidated JSON files:
+  - `bdd100k_labels_images_train.json`
+  - `bdd100k_labels_images_val.json`
+- Place them under `data/10k/annotations/` or `data/annotations/`. The loader automatically picks them up and filters to the images present in `data/10k/`.
+
 ## Phase 1: Cross-Attention Mechanism Training
 
 Training cross-attention layers and FF networks while keeping CLIP encoders frozen.

@@ -24,7 +24,7 @@ class BDD100KDataset(Dataset):
             self.images_dir = os.path.join(data_dir, split)
             print(f"Warning: Assuming images in {self.images_dir}")
         
-        # Try multiple annotation locations
+        # Try multiple annotation locations (consolidated JSON first)
         annotation_paths = [
             os.path.join(data_dir, "annotations", f"bdd100k_labels_{split}.json"),
             os.path.join(data_dir, f"labels_{split}.json"),
@@ -44,9 +44,43 @@ class BDD100KDataset(Dataset):
                 self.annotations = json.load(f)
             print(f"Loaded {len(self.annotations)} annotations from {self.annotations_file}")
         else:
-            self.annotations = []
-            print(f"Warning: No annotations file found. Tried: {annotation_paths}")
-            print("You may need to download annotations separately from: https://bdd-data.berkeley.edu/portal.html")
+            # Fallback: per-image JSON directories (e.g., data/labels/100k/<split>/*.json)
+            per_image_dir_candidates = [
+                os.path.join(os.path.dirname(data_dir), "labels", "100k", split),
+                os.path.join(data_dir, "labels", "100k", split),
+            ]
+            per_image_dir = next((p for p in per_image_dir_candidates if os.path.isdir(p)), None)
+            if per_image_dir:
+                print(f"Found per-image labels in {per_image_dir}; matching to available images...")
+                # Build a quick set of available image basenames
+                try:
+                    image_basenames = set(os.listdir(self.images_dir))
+                except FileNotFoundError:
+                    image_basenames = set()
+                matched = []
+                # Attempt to match <name>.json to <name>.jpg
+                for fname in os.listdir(per_image_dir):
+                    if not fname.endswith('.json'):
+                        continue
+                    base = fname[:-5]  # strip .json
+                    candidate_jpg = base + ".jpg"
+                    if candidate_jpg in image_basenames:
+                        with open(os.path.join(per_image_dir, fname), 'r') as jf:
+                            ann = json.load(jf)
+                        # Normalize a minimal structure compatible with __getitem__ usage
+                        matched.append({
+                            "name": candidate_jpg,
+                            "labels": ann.get("labels", []) if isinstance(ann, dict) else [],
+                        })
+                self.annotations = matched
+                print(f"Matched {len(self.annotations)} per-image labels to images in {self.images_dir}")
+                if len(self.annotations) == 0:
+                    print("Note: 100k per-image labels often don't match 10k image filenames.\n"
+                          "Prefer consolidated JSON: bdd100k_labels_images_{train|val}.json")
+            else:
+                self.annotations = []
+                print(f"Warning: No annotations file found. Tried: {annotation_paths}")
+                print("You may need to download consolidated annotations: https://bdd-data.berkeley.edu/portal.html")
         
         if max_samples:
             self.annotations = self.annotations[:max_samples]
