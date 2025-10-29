@@ -118,10 +118,11 @@ class CLIPTransformerDetector(nn.Module):
             
         # Get CLIP dimensions
         self.clip_dim = self.clip_model.config.projection_dim  # 512 for ViT-B/16
+        self.clip_vision_hidden = self.clip_model.vision_model.config.hidden_size  # 768 for ViT-B/16
         
         # Projection layers to match dimensions
         self.text_proj = nn.Linear(self.clip_dim, d_model)
-        self.image_proj = nn.Linear(self.clip_dim, d_model)
+        self.image_proj = nn.Linear(self.clip_vision_hidden, d_model)
         
         # Cross-attention layers
         self.cross_attention_layers = nn.ModuleList([
@@ -155,18 +156,21 @@ class CLIPTransformerDetector(nn.Module):
         return text_embeddings
     
     def encode_image(self, images):
-        """Encode images using CLIP vision encoder."""
-        # Process images through CLIP
+        """Encode images into per-patch features using CLIP's vision transformer.
+
+        Returns [batch, num_patches, d_model].
+        """
+        # Process images through CLIP processor
         image_inputs = self.clip_processor(images=images, return_tensors="pt")
         image_inputs = {k: v.to(next(self.parameters()).device) for k, v in image_inputs.items()}
-        
-        # Get image features (patch embeddings)
-        vision_outputs = self.clip_model.get_image_features(**image_inputs)
-        image_features = vision_outputs.unsqueeze(1)  # [batch_size, 1, clip_dim]
-        
+
+        # Use the vision transformer to get patch embeddings (exclude CLS token)
+        vision_out = self.clip_model.vision_model(pixel_values=image_inputs["pixel_values"])  # BaseModelOutputWithPooling
+        patch_tokens = vision_out.last_hidden_state[:, 1:, :]  # [B, num_patches, hidden_dim]
+
         # Project to model dimension
-        image_features = self.image_proj(image_features)  # [batch_size, 1, d_model]
-        
+        image_features = self.image_proj(patch_tokens)  # [B, num_patches, d_model]
+
         return image_features
     
     def forward(self, images, text_queries):
