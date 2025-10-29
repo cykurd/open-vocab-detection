@@ -130,7 +130,13 @@ def main():
 		print(f"Error loading model: {e}")
 		return
 
+	# Create checkpoint directory
+	checkpoint_dir = "checkpoints"
+	os.makedirs(checkpoint_dir, exist_ok=True)
+	
 	step = 0
+	best_loss = float('inf')
+	
 	for sample in dataloader:
 		if step >= args.steps:
 			break
@@ -157,7 +163,32 @@ def main():
 			optimizer.step()
 
 			step += 1
-			print(f"Step {step}/{args.steps} - loss: {loss.item():.4f}")
+			current_loss = loss.item()
+			print(f"Step {step}/{args.steps} - loss: {current_loss:.4f}")
+			
+			# Save checkpoint every 10 steps or if it's the best loss so far
+			if step % 10 == 0 or current_loss < best_loss:
+				checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_step_{step}.pth")
+				torch.save({
+					'step': step,
+					'model_state_dict': detector.state_dict(),
+					'optimizer_state_dict': optimizer.state_dict(),
+					'loss': current_loss,
+					'args': args
+				}, checkpoint_path)
+				print(f"  Saved checkpoint: {checkpoint_path}")
+				
+				if current_loss < best_loss:
+					best_loss = current_loss
+					best_path = os.path.join(checkpoint_dir, "best_model.pth")
+					torch.save({
+						'step': step,
+						'model_state_dict': detector.state_dict(),
+						'optimizer_state_dict': optimizer.state_dict(),
+						'loss': current_loss,
+						'args': args
+					}, best_path)
+					print(f"  New best model saved: {best_path}")
 			
 		except Exception as e:
 			print(f"Error on step {step + 1}: {e}")
@@ -167,7 +198,17 @@ def main():
 			print(f"Boxes: {sample.get('boxes', 'N/A')}")
 			break
 
-	print("Smoke test completed.")
+	# Save final model
+	final_path = os.path.join(checkpoint_dir, "final_model.pth")
+	torch.save({
+		'step': step,
+		'model_state_dict': detector.state_dict(),
+		'optimizer_state_dict': optimizer.state_dict(),
+		'loss': current_loss if 'current_loss' in locals() else float('inf'),
+		'args': args
+	}, final_path)
+	print(f"Final model saved: {final_path}")
+	print("Training completed.")
 
 
 if __name__ == "__main__":
